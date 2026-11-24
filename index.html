@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Честные деньги</title>
+<meta name="description" content="Тренажёр по финансовой безопасности: блокируйте подозрительные операции и научитесь отличать запросы комплаенса от мошенников.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Честные деньги — тренажёр по финансовой безопасности">
+<meta property="og:description" content="5 уровней, квиз «Оберег от мошенников» и именной сертификат «Защитник честных денег».">
+<meta name="theme-color" content="#0b0b12">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 28 7v9c0 7-5 12-12 14C9 28 4 23 4 16V7z' fill='%2341a6f6' stroke='%23f4f4f4' stroke-width='2'/%3E%3Crect x='11' y='14' width='10' height='9' fill='%23ffcd75'/%3E%3Cpath d='M13 14v-3a3 3 0 0 1 6 0v3' fill='none' stroke='%23f4f4f4' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b12; overflow: hidden; }
+  body { box-sizing: border-box; }
+  body { display: flex; align-items: center; justify-content: center; font-family: "Courier New", monospace; }
+  #wrap { transform-origin: center center; }
+  #tv {
+    position: relative; width: 900px; height: 600px; padding: 26px; box-sizing: content-box;
+    background: #1a1a22; border-radius: 48px;
+    box-shadow: 0 0 0 4px #2b2b38, 0 0 0 8px #101016, 0 20px 60px #000, inset 0 0 30px #000;
+  }
+  #screen { position: relative; width: 900px; height: 600px; border-radius: 28px; overflow: hidden; background: #000; }
+  canvas { display: block; width: 900px; height: 600px; image-rendering: pixelated; touch-action: none; }
+  #pad { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 110px; padding: 10px 16px; box-sizing: border-box; justify-content: space-between; align-items: center; gap: 12px; user-select: none; -webkit-user-select: none; }
+  #pad .grp { display: flex; gap: 12px; }
+  #pad button { font: bold 22px "Courier New", monospace; color: #f4f4f4; background: #1a1a22; border: 3px solid #566c86; border-radius: 14px; height: 84px; min-width: 84px; padding: 0 14px; touch-action: none; -webkit-tap-highlight-color: transparent; }
+  #pad button.on { background: #29366f; border-color: #41a6f6; }
+  #pad button.fire { min-width: 150px; border-color: #ef7d57; }
+  @media (pointer: coarse) { #pad { display: flex; } #hint { display: none; } }
+  #scan {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,.22) 3px);
+    box-shadow: inset 0 0 90px rgba(0,0,0,.65);
+    border-radius: 28px;
+  }
+  #hint { position: absolute; left: 0; right: 0; bottom: 6px; text-align: center; color: #566c86; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="tv">
+    <div id="screen">
+      <canvas id="c" width="900" height="600" tabindex="0"></canvas>
+      <div id="scan"></div>
+    </div>
+    <div id="hint">← → движение · ПРОБЕЛ огонь · P пауза · M звук · H справка · ENTER далее · мышь/тач: тяни и держи</div>
+  </div>
+</div>
+<div id="pad">
+  <div class="grp"><button data-k="ArrowLeft" aria-label="Влево">◀</button><button data-k="ArrowRight" aria-label="Вправо">▶</button></div>
+  <button class="fire" data-k=" ">ОГОНЬ</button>
+</div>
+<script>
+"use strict";
+// ---------- Setup ----------
+const W = 300, H = 200, S = 3;             // logical resolution and scale
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+const low = document.createElement("canvas"); low.width = W; low.height = H;
+const g = low.getContext("2d");
+
+function fit() {
+  const pad = matchMedia("(pointer: coarse)").matches ? 110 : 0;
+  document.body.style.paddingBottom = pad + "px";
+  const k = Math.min(1, innerWidth / 960, (innerHeight - pad) / 660);
+  document.getElementById("wrap").style.transform = "scale(" + k + ")";
+}
+addEventListener("resize", fit); fit();
+
+// ---------- Palette ----------
+const P = {
+  k: "#0f0f1b", w: "#f4f4f4", g: "#38b764", G: "#257179", r: "#b13e53", R: "#ef7d57",
+  y: "#ffcd75", p: "#8b3fa8", P: "#5d275d", b: "#3b5dc9", B: "#41a6f6", s: "#94b0c2", S: "#566c86", n: "#1a1c2c",
+  o: "#ff9ec4", c: "#73eff7", l: "#7fd04a"
+};
+
+// ---------- Sprites ----------
+function sprite(rows, pal) {
+  const h = rows.length, w = rows[0].length;
+  rows.forEach((r, j) => { if (r.length !== w) console.warn("sprite row", j, "has length", r.length, "expected", w); });
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const x = c.getContext("2d");
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const ch = rows[j][i];
+    if (ch !== "." && ch !== " ") { x.fillStyle = (pal && pal[ch]) || P[ch]; x.fillRect(i, j, 1, 1); }
+  }
+  return c;
+}
+
+const officer = sprite([
+  "...kkkkkk...",
+  "..kPPPPPPk..",
+  "..kyyyyyyk..",
+  "..kykyykyk..",
+  "..kyyyyyyk..",
+  "...kyyyyk...",
+  "..bbbwwbbb..",
+  ".bbbbwrbbbb.",
+  ".bbbbbrbbbb.",
+  ".ybbbbrbbbby",
+  "..bbbbbbbb..",
+  "..kk....kk.."
+]);
+
+const officer2 = sprite([
+  "...kkkkkk...",
+  "..kPPPPPPk..",
+  "..kyyyyyyk..",
+  "..kykyykyk..",
+  "..kyyyyyyk..",
+  "...kyyyyk...",
+  "..bbbwwbbb..",
+  ".bbbbwrbbbb.",
+  ".bbbbbrbbbb.",
+  ".ybbbbrbbbby",
+  "..bbbbbbbb..",
+  "...kk..kk..."
+]);
+
+// ----- BAD pictures: scary -----
+const skull = sprite([
+  "..wwwwwwww..",
+  ".wwwwwwwwww.",
+  "wwwwwwwwwwww",
+  "wwkkwwwwkkww",
+  "wkkkkwwkkkkw",
+  "wkrrkwwkrrkw",
+  "wwkkwwwwkkww",
+  "wwwwwkkwwwww",
+  ".wwwwwwwwww.",
+  "..wkwkwkww..",
+  "..wkwkwkww..",
+  "...wwwwww..."
+]);
+const spider = sprite([
+  "k..........k",
+  ".k........k.",
+  "..k.pppp.k..",
+  "k.kppppppk.k",
+  "..pprpprpp..",
+  "k.pppppppp.k",
+  "..kppppppk..",
+  ".k.pppppp.k.",
+  "k...pppp...k",
+  "....pppp....",
+  ".....pp.....",
+  "............"
+]);
+const mask = sprite([
+  "..kkkkkkkk..",
+  ".kkkkkkkkkk.",
+  "kkkkkkkkkkkk",
+  "..yyyyyyyy..",
+  ".kkkkkkkkkk.",
+  ".kwkkkkkkwk.",
+  ".yyyyyyyyyy.",
+  ".yyyrrrryyy.",
+  ".yyrwrwrwyy.",
+  "..yyrrrryy..",
+  "...rrrrrr...",
+  "..rrrrrrrr.."
+]);
+const snake = sprite([
+  "............",
+  "...GGGG.....",
+  "..GGGGGG....",
+  "..GGwGwG....",
+  "..GGGGGGr...",
+  "...GGGGG.r..",
+  ".....GGGG...",
+  "...GGGGGG...",
+  "..GGGG......",
+  "..GGGGGG....",
+  "...GGGGGGG..",
+  ".....GGGGGG."
+], { G: "#7fb02a" });
+const bag = sprite([
+  "....kkkk....",
+  ".....rr.....",
+  "...kkrrkk...",
+  "..kggggggk..",
+  ".kgrrggrrgk.",
+  ".kgwkggwkgk.",
+  ".kggggggggk.",
+  ".kgkwkwkwgk.",
+  ".kggkkkkkgk.",
+  "..kggggggk..",
+  "...kkkkkk...",
+  "............"
+], { g: "#3d6b2e" });
+
+// ----- GOOD pictures: cute -----
+const heartG = sprite([
+  "............",
+  ".oooo..oooo.",
+  "ooowoooooooo",
+  "oooooooooooo",
+  "oooooooooooo",
+  ".oooooooooo.",
+  "..oooooooo..",
+  "...oooooo...",
+  "....oooo....",
+  ".....oo.....",
+  "............",
+  "............"
+]);
+const starG = sprite([
+  ".....yy.....",
+  ".....yy.....",
+  "....yyyy....",
+  "yyyyyyyyyyyy",
+  ".yykyyyykyy.",
+  "..yykkkkyy..",
+  "...yyyyyy...",
+  "...yyyyyy...",
+  "..yyy..yyy..",
+  ".yyy....yyy.",
+  ".yy......yy.",
+  "............"
+]);
+const flowerG = sprite([
+  "....oooo....",
+  "..oooooooo..",
+  ".oooyyyyooo.",
+  ".ooyykkyyoo.",
+  ".oooyyyyooo.",
+  "..oooooooo..",
+  "....oooo....",
+  ".....ll.....",
+  "..ll.ll.....",
+  "..llllll....",
+  ".....ll.....",
+  ".....ll....."
+]);
+const iceG = sprite([
+  "....oooo....",
+  "..oooooooo..",
+  ".oowooooooo.",
+  ".oooooooooo.",
+  ".cccccccccc.",
+  ".ccwccccccc.",
+  "..yyyyyyyy..",
+  "...yRyRyRy..",
+  "....yRyRy...",
+  ".....yRy....",
+  "......y.....",
+  "............"
+]);
+const amulet = sprite([
+  ".kkkkkkkkkk.",
+  "kBBBBBBBBBBk",
+  "kBBBBBBBBBBk",
+  "kBBBBBBBBwBk",
+  "kBBBBBBBwwBk",
+  "kBwBBBBwwBBk",
+  ".kwwBBwwBBk.",
+  ".kBwwwwBBBk.",
+  "..kBBwwBBk..",
+  "...kBBBBk...",
+  "....kBBk....",
+  ".....kk....."
+]);
+
+const GOODS = [heartG, starG, flowerG, iceG].map((s, i) => ({ id: "good" + i, label: "", bad: false, spr: s, col: P.o }));
+const BADS = [
+  { id: "skull",  label: "САНКЦИОННАЯ ТРАНЗАКЦИЯ", names: ["САНКЦИОННАЯ ТРАНЗАКЦИЯ", "ЧЁРНЫЙ СПИСОК", "ПОДСАНКЦИОННЫЙ КЛИЕНТ"], bad: true, spr: skull,  col: P.w, minLvl: 1 },
+  { id: "spider", label: "ДАРКНЕТ",                names: ["ДАРКНЕТ", "НЕЛЕГАЛЬНЫЙ МАРКЕТ", "ПЛАТЁЖ НА ДАРКНЕТ"],                    bad: true, spr: spider, col: P.p, minLvl: 1 },
+  { id: "mask",   label: "ВЫВОД МОШЕННИКУ",        names: ["ВЫВОД МОШЕННИКУ", "ФИШИНГОВЫЙ ПЕРЕВОД", "ФЕЙКОВАЯ ИНВЕСТИЦИЯ"],          bad: true, spr: mask,   col: P.y, minLvl: 1 },
+  { id: "bag",    label: "ГРЯЗНЫЕ ДЕНЬГИ",         names: ["ГРЯЗНЫЕ ДЕНЬГИ", "ОТМЫВАНИЕ СРЕДСТВ", "НЕЗАКОННЫЙ ДОХОД"],               bad: true, spr: bag,    col: P.l, minLvl: 2, hp: 2 },
+  { id: "snake",  label: "ЗАПУТАННЫЙ СЛЕД",        names: ["ЗАПУТАННЫЙ СЛЕД", "ЦЕПОЧКА ПЕРЕВОДОВ", "МИКСЕР"],                        bad: true, spr: snake,  col: P.l, minLvl: 3 }
+];
+const B = id => BADS.find(x => x.id === id);
+// eye pixels (x, y, width) inside each 12x12 sprite, used for the "evil blink" overlay
+const EYES = { skull: [[2, 5, 2], [8, 5, 2]], spider: [[4, 4, 1], [7, 4, 1]], mask: [[2, 5, 1], [9, 5, 1]], bag: [[3, 5, 1], [7, 5, 1]], snake: [[4, 3, 1], [6, 3, 1]] };
+
+function box(col, icon) {
+  const rows = [];
+  for (let j = 0; j < 11; j++) { let r = ""; for (let i = 0; i < 11; i++) r += (i === 0 || j === 0 || i === 10 || j === 10) ? "w" : "m"; rows.push(r); }
+  icon.forEach((r, j) => { const a = rows[j + 3].split(""); for (let i = 0; i < 5; i++) if (r[i] !== ".") a[i + 3] = "i"; rows[j + 3] = a.join(""); });
+  return sprite(rows, { w: P.w, m: col, i: P.w });
+}
+const POWERS = [
+  { id: "triple", label: "ТРОЙНОЙ ВЫСТРЕЛ", spr: box(P.b, ["w.w.w", ".www.", "..w..", "..w..", "..w.."]) },
+  { id: "slow",   label: "ЗАМЕДЛЕНИЕ",     spr: box(P.G, ["w.w.w", ".www.", "wwwww", ".www.", "w.w.w"]) },
+  { id: "life",   label: "ЖИЗНЬ +1",       spr: box(P.r, [".w.w.", "wwwww", "wwwww", ".www.", "..w.."]) }
+];
+
+const FACTS = [
+  "Комплаенс — это отдел, который следит, чтобы через компанию не проходили грязные деньги.",
+  "Грязные деньги — это деньги, добытые обманом или преступлением.",
+  "Отмывание — когда такие деньги гоняют по цепочке, чтобы они выглядели честными.",
+  "Если компания просит паспорт или спрашивает, откуда деньги — это защита, а не недоверие.",
+  "Честных людей блокировать нельзя. Поэтому сердечки и звёзды мы пропускаем.",
+  "Настоящий комплаенс никогда не просит пароли и коды из СМС.",
+  "Мошенники торопят и пугают. Настоящие проверки идут спокойно, через приложение."
+];
+
+const heart = sprite([".rr.rr.", "rrrrrrr", "rrrrrrr", ".rrrrr.", "..rrr..", "...r..."]);
+
+// ---------- Audio ----------
+let ac = null, muted = false;
+try { muted = localStorage.getItem("amlMuted") === "1"; } catch (e) {}
+function wake() {
+  try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume(); } catch (e) {}
+}
+function beep(freq, dur, type, vol) {
+  if (muted) return;
+  try {
+    wake();
+    const o = ac.createOscillator(), v = ac.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    v.gain.value = vol || 0.05; v.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    o.connect(v); v.connect(ac.destination); o.start(); o.stop(ac.currentTime + dur);
+  } catch (e) {}
+}
+
+function sweep(f0, f1, dur, type, vol, delay) {
+  if (muted) return;
+  try {
+    wake();
+    const t0 = ac.currentTime + (delay || 0), o = ac.createOscillator(), v = ac.createGain();
+    o.type = type || "square"; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
+    v.gain.setValueAtTime(vol || 0.05, t0); v.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(v); v.connect(ac.destination); o.start(t0); o.stop(t0 + dur);
+  } catch (e) {}
+}
+function noise(dur, vol, delay) {
+  if (muted) return;
+  try {
+    wake();
+    const t0 = ac.currentTime + (delay || 0), n = Math.max(1, (ac.sampleRate * dur) | 0), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = ac.createBufferSource(), v = ac.createGain();
+    src.buffer = b; v.gain.setValueAtTime(vol, t0); v.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(v); v.connect(ac.destination); src.start(t0);
+  } catch (e) {}
+}
+function seq(notes, type, vol) { notes.forEach(n => sweep(n[0], n[0], n[2] || 0.12, type, vol, n[1])); }
+// a different "death sound" for each kind of threat
+const SFX = {
+  skull:  () => { sweep(420, 70, .35, "sawtooth", .07); noise(.2, .05); },
+  spider: () => { [900, 1200, 1500].forEach((f, i) => sweep(f, f * 1.2, .06, "square", .04, i * .05)); },
+  mask:   () => { sweep(520, 380, .12, "sawtooth", .06); sweep(520, 380, .12, "sawtooth", .06, .16); sweep(440, 200, .25, "sawtooth", .06, .32); },
+  bag:    () => { sweep(1300, 1300, .08, "square", .05); sweep(1750, 1750, .12, "square", .05, .08); sweep(140, 60, .2, "triangle", .1, .05); },
+  snake:  () => { noise(.35, .06); sweep(1600, 500, .35, "sawtooth", .03); }
+};
+function fanfare() {
+  seq([[523, 0, .14], [659, .14, .14], [784, .28, .14], [1047, .42, .6], [784, .42, .6], [659, .42, .6]], "square", .05);
+  sweep(131, 131, .9, "triangle", .09, .42); sweep(262, 262, .9, "triangle", .05, .42);
+  seq([[1047, 1.05, .12], [1319, 1.17, .12], [1568, 1.29, .5]], "square", .04);
+}
+function levelJingle() { seq([[784, 0, .1], [988, .1, .1], [1175, .2, .3]], "square", .05); }
+function overSound() { seq([[392, 0, .2], [349, .22, .2], [294, .44, .2], [196, .66, .6]], "sawtooth", .05); }
+
+// calm 8-bit background loop: arpeggio (square) + bass (triangle), chords Am-F-C-G
+const mf = m => 440 * Math.pow(2, (m - 69) / 12);
+const CH = [{ b: 45, a: [69, 72, 76, 72] }, { b: 41, a: [65, 69, 72, 69] }, { b: 48, a: [67, 72, 76, 72] }, { b: 43, a: [67, 71, 74, 71] }];
+const MSTEP = 0.24; let mNext = 0, mStep = 0;
+function tone(f, t0, dur, type, vol) {
+  const o = ac.createOscillator(), v = ac.createGain();
+  o.type = type; o.frequency.value = f;
+  v.gain.setValueAtTime(vol, t0); v.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(v); v.connect(ac.destination); o.start(t0); o.stop(t0 + dur);
+}
+function music() {
+  const okState = state === "name" || state === "play" || state === "quiz" || state === "safe" || state === "win" || state === "title" || state === "help" || state === "levels" || state === "review";
+  if (muted || !ac || ac.state !== "running" || !okState) { mNext = 0; return; }
+  const now = ac.currentTime;
+  if (!mNext || mNext < now) mNext = now + 0.05;
+  while (mNext < now + 0.25) {
+    const c = CH[((mStep / 8) | 0) % 4], k = mStep % 8;
+    tone(mf(c.a[k % 4]), mNext, MSTEP * 0.9, "square", 0.018);
+    if (k % 4 === 0) tone(mf(c.b), mNext, MSTEP * 3.6, "triangle", 0.05);
+    mNext += MSTEP; mStep++;
+  }
+}
+
+// ---------- Input ----------
+const keys = new Set();
+const BLOCK = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Spacebar"];
+addEventListener("keydown", e => {
+  if (BLOCK.includes(e.key)) e.preventDefault();
+  wake();
+  if (state === "name") { nameKey(e); return; }
+  if (e.repeat && (e.key === "Enter" || e.key === "p" || e.key === "P")) return;
+  if ((e.key === "m" || e.key === "M" || e.key === "ь" || e.key === "Ь") && !e.repeat) {
+    muted = !muted; try { localStorage.setItem("amlMuted", muted ? "1" : "0"); } catch (_) {}
+    if (!muted) beep(660, .08);
+  }
+  if (state === "quiz") { quizKey(e.key); return; }
+  if (state === "safe" || state === "win") {
+    if (e.key === "Enter") advance();
+    else if (state === "win" && (e.key === "s" || e.key === "S" || e.key === "ы" || e.key === "Ы")) saveCert();
+    else if (state === "win" && (e.key === "d" || e.key === "D" || e.key === "в" || e.key === "В")) shareCert();
+    else if (state === "win" && (e.key === "a" || e.key === "A" || e.key === "ф" || e.key === "Ф")) openAch();
+    return;
+  }
+  if (state === "ach") { if (e.key === "Enter" || e.key === "Escape" || e.key === "a" || e.key === "A") state = achBack; return; }
+  if (state === "review") { if (e.key === "Enter" || e.key === "Escape") leaveReview(); return; }
+  if (state === "levels") { levelsKey(e.key); return; }
+  keys.add(e.key);
+  const isL = e.key === "l" || e.key === "L" || e.key === "д" || e.key === "Д";
+  const isA = e.key === "a" || e.key === "A" || e.key === "ф" || e.key === "Ф";
+  const isR = e.key === "r" || e.key === "R" || e.key === "к" || e.key === "К";
+  if (isL && (state === "title" || state === "help" || state === "over")) openLevels();
+  else if (isA && (state === "title" || state === "help" || state === "over")) openAch();
+  else if (isR && state === "over" && topicsWrong().length) openReview("over");
+  else if (e.key === "Enter") { if (state === "title") { playerName = ""; state = "name"; } else if (state === "help") start(1); else if (state === "over") start(level); }
+  else if ((e.key === "h" || e.key === "H") && (state === "title" || state === "over")) state = "help";
+  else if ((e.key === "p" || e.key === "P") && (state === "play" || state === "pause")) state = state === "play" ? "pause" : "play";
+}, { passive: false });
+addEventListener("keyup", e => { keys.delete(e.key); });
+addEventListener("blur", () => { keys.clear(); ptr.on = false; if (state === "play") state = "pause"; });
+cv.focus();
+
+// mouse / touch: drag to move and hold to shoot; tap to advance screens
+const ptr = { on: false, x: 150 };
+function ptrPos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * 900, (e.clientY - r.top) / r.height * 600]; }
+cv.addEventListener("pointerdown", e => {
+  wake();
+  const [x, y] = ptrPos(e);
+  if ((state === "title" || state === "help" || state === "over") && y > 570 && x < 330) openLevels();
+  else if ((state === "title" || state === "help" || state === "over") && y > 546 && y <= 570 && x < 330) openAch();
+  else if (state === "ach") state = achBack;
+  else if (state === "title") { playerName = ""; state = "name"; }
+  else if (state === "name") tapName();
+  else if (state === "help") start(1);
+  else if (state === "over") start(level);
+  else if (state === "pause") state = "play";
+  else if (state === "win") { if (x >= CERT_BTN.x && x <= CERT_BTN.x + CERT_BTN.w && y >= CERT_BTN.y && y <= CERT_BTN.y + CERT_BTN.h) saveCert(); else if (x >= SHARE_BTN.x && x <= SHARE_BTN.x + SHARE_BTN.w && y >= SHARE_BTN.y && y <= SHARE_BTN.y + SHARE_BTN.h) shareCert(); else advance(); }
+  else if (state === "safe") advance();
+  else if (state === "review") leaveReview();
+  else if (state === "levels") levelsTap(x, y);
+  else if (state === "quiz" && quiz) {
+    if (quiz.done) nextAfterQuiz();
+    else { const i = Math.floor((y - quiz.top) / 56); if (i >= 0 && i < 3 && (y - quiz.top) % 56 < 46) quizAnswer(i); }
+  } else if (state === "play") { ptr.on = true; ptr.x = x / S; }
+  try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+});
+cv.addEventListener("pointermove", e => { if (ptr.on) ptr.x = ptrPos(e)[0] / S; });
+addEventListener("pointerup", () => { ptr.on = false; });
+addEventListener("pointercancel", () => { ptr.on = false; });
+
+// on-screen buttons for phones (left / right / fire)
+document.querySelectorAll("#pad button").forEach(b => {
+  const k = b.dataset.k;
+  b.addEventListener("pointerdown", e => { e.preventDefault(); wake(); keys.add(k); b.classList.add("on"); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => b.addEventListener(ev, () => { keys.delete(k); b.classList.remove("on"); }));
+});
+
+// ---------- Game state ----------
+const GOAL = 5;                            // bad things to catch per level
+let state = "title"; // title | help | play | pause | quiz | over
+let player = null, shots = [], txs = [], parts = [], floaters = [], score = 0, lives = 5, level = 1, kills = 0, lvlCaught = 0, combo = 0, best = 0, spawnT = 0, shake = 0, stars = [], t = 0, pus = [], spreadT = 0, freezeT = 0, flash = 0, banner = null, rain = [], missed = 0, falsePos = 0, quiz = null, quizDeck = [], quizRight = 0, quizTotal = 0, amulets = 0, quizN = 2, quizIdx = 0, lvlRight = 0, safeAll = false, unlocked = 1, playerName = "", tutT = 0, toast = null, wrongTopics = {}, reviewBack = "win", lvlSel = 0, certName = "", lvlMiss = 0, lvlFP = 0, lost = 0, achBack = "title", ach = {}, achQ = [], achShow = null, shareNote = null;
+
+try { best = +localStorage.getItem("amlBest") || 0; unlocked = Math.max(1, Math.min(5, +localStorage.getItem("amlUnlocked") || 1)); } catch (e) {}
+
+rain = Array.from({ length: 22 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 20 + Math.random() * 40, l: 4 + (Math.random() * 8 | 0) }));
+stars = Array.from({ length: 40 }, () => ({ x: Math.random() * W, y: 16 + Math.random() * 150, p: Math.random() * 6 }));
+
+function start(lv) {
+  lv = lv || 1;
+  player = { x: W / 2 - 6, y: 181, cd: 0 };
+  shots = []; txs = []; parts = []; floaters = []; pus = []; spreadT = 0; freezeT = 0; flash = 0; banner = null; toast = null;
+  score = 0; lives = 5; level = lv; kills = 0; lvlCaught = 0; lvlMiss = 0; lvlFP = 0; lost = 0; combo = 0; shake = 0; missed = 0; falsePos = 0;
+  quizRight = 0; quizTotal = 0; amulets = 0; quiz = null; wrongTopics = {}; certName = "";
+  state = "play"; beep(660, .1); beep(880, .15);
+  if (lv === 1) {
+    // 10-second tutorial: one threat and one client, with hints
+    tutT = 10; spawnT = 99;
+    txs.push({ x: 70, y: 16, type: BADS[0], name: BADS[0].names[0], sz: 16, hp: 1, ph: 0, wob: false, tut: "bad" });
+    txs.push({ x: 214, y: 16, type: GOODS[0], name: "", sz: 16, hp: 1, ph: 0, wob: false, tut: "good" });
+  } else {
+    tutT = 0; spawnT = 2;
+    showBanner("УРОВЕНЬ " + lv + " ИЗ " + MAXLVL + " · ЦЕЛЬ: " + GOAL, FACTS[(lv - 1) % FACTS.length]);
+  }
+}
+
+function say(x, y, text, col) { floaters.push({ x, y, text, col, life: 1.1 }); }
+function burst(x, y, col, n) {
+  for (let i = 0; i < n; i++) parts.push({ x, y, vx: (Math.random() - .5) * 90, vy: (Math.random() - .8) * 80, life: .5 + Math.random() * .3, col });
+}
+
+function spawn() {
+  let type;
+  const d = eff() - 1;                              // 0..8: difficulty step
+  if (Math.random() < 0.5 + d * 0.012) {
+    let pool = BADS.filter(b => level >= b.minLvl);
+    if (eff() >= 6) pool = pool.concat(pool.filter(b => b.id === "bag" || b.id === "snake"));  // tougher mix later
+    type = pool[(Math.random() * pool.length) | 0];
+  } else type = GOODS[(Math.random() * GOODS.length) | 0];
+  const name = type.names ? type.names[(Math.random() * type.names.length) | 0] : "";
+  txs.push({ x: 8 + Math.random() * (W - 32), y: 15, type, name, sz: 16, hp: type.hp || 1, ph: Math.random() * 6, wob: Math.random() < 0.2 + d * 0.05 });
+}
+
+function loseLife(reason) {
+  lives--; lost++; combo = 0; shake = 0.3; flash = 0.35; beep(110, .35, "sawtooth", .08);
+  say(player.x - 20, 160, reason, P.R);
+  if (lives <= 0) {
+    state = "over"; overSound();
+    if (score > best) { best = score; try { localStorage.setItem("amlBest", best); } catch (e) {} }
+  }
+}
+
+function update(dt) {
+  t += dt;
+  if (achShow) { achShow.life -= dt; if (achShow.life <= 0) achShow = null; }
+  if (!achShow && achQ.length) achShow = { a: achQ.shift(), life: 3.5 };
+  if (state !== "play") return;
+  const sp = 130, px0 = player.x;
+  if (keys.has("ArrowLeft") || keys.has("a")) player.x -= sp * dt;
+  if (keys.has("ArrowRight") || keys.has("d")) player.x += sp * dt;
+  if (ptr.on) { const d = ptr.x - 6 - player.x, m = 180 * dt; player.x += Math.max(-m, Math.min(m, d)); }
+  player.x = Math.max(2, Math.min(W - 14, player.x));
+  player.mv = Math.abs(player.x - px0) > 0.01; player.fa = (player.fa || 0) + (player.mv ? dt : 0); player.fl = (player.fl || 0) - dt;
+  player.cd -= dt; spreadT -= dt; freezeT -= dt; flash -= dt;
+  if (banner) { banner.life -= dt; if (banner.life <= 0) banner = null; }
+  if (toast) { toast.life -= dt; if (toast.life <= 0) toast = null; }
+  if ((keys.has(" ") || keys.has("ArrowUp") || ptr.on) && player.cd <= 0) {
+    if (spreadT > 0) [-40, 0, 40].forEach(v => shots.push({ x: player.x + 5, y: player.y - 2, vx: v }));
+    else shots.push({ x: player.x + 5, y: player.y - 2, vx: 0 });
+    player.cd = 0.2; player.fl = 0.08; beep(880, .05, "square", .03);
+  }
+  // calm pace: slow spawn, gentle speed-up with a cap
+  if (tutT > 0) { tutT -= dt; if (tutT <= 0) spawnT = 0.6; }
+  else { spawnT -= dt; if (spawnT <= 0) { spawn(); spawnT = Math.max(1.3, 2.2 - (eff() - 1) * 0.1) * (0.85 + Math.random() * 0.4); } }
+  const fall = (16 + (eff() - 1) * 2.2) * (freezeT > 0 ? 0.35 : 1) * (tutT > 0 ? 0.8 : 1);
+  shots.forEach(s => { s.y -= 200 * dt; s.x += s.vx * dt; });
+  shots = shots.filter(s => s.y > 12 && s.x > 0 && s.x < W);
+  for (const q of txs) {
+    q.y += fall * dt; q.ph += dt * 3;
+    if (q.type.id === "snake") q.x += Math.sin(q.ph * 1.4) * (22 + eff() * 2) * dt;
+    else if (q.wob) q.x += Math.sin(q.ph) * 14 * dt;
+    q.x = Math.max(1, Math.min(W - q.sz - 1, q.x));
+  }
+  // shots vs things
+  for (const s of shots) for (const q of txs) {
+    if (q.dead || s.dead) continue;
+    if (s.x > q.x - 2 && s.x < q.x + q.sz + 2 && s.y > q.y && s.y < q.y + q.sz) {
+      s.dead = true; q.hp--;
+      const cx = q.x + q.sz / 2, cy = q.y + q.sz / 2;
+      if (q.hp > 0) { burst(cx, cy, P.y, 6); say(cx - 8, q.y, "ЕЩЁ РАЗ!", P.y); sweep(500, 200, .12, "square", .05); continue; }
+      q.dead = true;
+      if (q.type.bad) {
+        combo++; const pts = 100 * Math.min(combo, 5); score += pts; kills++; lvlCaught++; award("first"); if (combo >= 10) award("streak10");
+        burst(cx, cy, q.type.col, 14); say(cx - 10, q.y, "ПОЙМАН! +" + pts, P.y); (SFX[q.type.id] || (() => beep(520, .1)))(); beep(900 + Math.min(combo, 8) * 80, .06, "triangle", .03);
+        if (Math.random() < 0.2) pus.push({ x: cx - 5, y: q.y, type: POWERS[(Math.random() * POWERS.length) | 0] });
+      } else {
+        combo = 0; falsePos++; lvlFP++; score = Math.max(0, score - 150); shake = 0.2;
+        burst(cx, cy, P.o, 10); say(cx - 20, q.y, "ОЙ, ЭТО ЧЕСТНЫЙ! -150", P.R); sweep(420, 160, .3, "sawtooth", .07); sweep(330, 120, .3, "sawtooth", .06, .25);
+        toast = { text: GOOD_HINTS[falsePos % GOOD_HINTS.length], life: 5 };
+      }
+    }
+  }
+  shots = shots.filter(s => !s.dead);
+  if (lvlCaught >= GOAL) { finishLevel(); return; }
+  // reaching the red line
+  for (const q of txs) {
+    if (!q.dead && q.y + q.sz >= 184) {
+      q.dead = true;
+      if (q.type.bad) { missed++; lvlMiss++; burst(q.x + 8, 176, P.r, 12); loseLife("УГРОЗА ПРОШЛА: -1 ЖИЗНЬ");
+        if (!toast) toast = { text: "Пропущенная угроза — это риск для клиентов. Подозрительные операции нужно останавливать до того, как они дойдут до конца.", life: 4.5 }; }
+      else { score += 10; say(q.x - 4, 168, "+10 ПРОШЁЛ", P.o); }
+    }
+  }
+  txs = txs.filter(q => !q.dead);
+  // power-ups
+  for (const p of pus) {
+    p.y += 28 * dt;
+    if (p.y + 11 >= player.y && p.y < player.y + 12 && p.x + 11 > player.x && p.x < player.x + 12) {
+      p.dead = true; beep(1200, .15); say(p.x - 10, p.y - 6, p.type.label, P.w); score += 50;
+      if (p.type.id === "triple") spreadT = 8; else if (p.type.id === "slow") freezeT = 5; else lives = Math.min(6, lives + 1);
+    } else if (p.y > 195) p.dead = true;
+  }
+  pus = pus.filter(p => !p.dead);
+  parts.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 160 * dt; p.life -= dt; });
+  parts = parts.filter(p => p.life > 0);
+  floaters.forEach(f => { f.y -= 14 * dt; f.life -= dt; });
+  floaters = floaters.filter(f => f.life > 0);
+  rain.forEach(r => { r.y += r.v * dt; if (r.y > H) { r.y = -10; r.x = Math.random() * W; } });
+  if (shake > 0) shake -= dt;
+}
+
+// ---------- Quiz: amulet against scammers ----------
+const MAXLVL = 5;
+// effective difficulty step 1..9, stretched over however many levels there are
+function eff() { return 1 + (Math.min(level, MAXLVL) - 1) * 8 / (MAXLVL - 1); }
+const QUIZ = [
+  { q: "Биржа просит фото паспорта и селфи при регистрации. Это подозрительно?",
+    o: ["Нет, это обычная проверка личности (KYC)", "Да, это мошенники", "Да, паспорт нельзя показывать никому"],
+    why: "Закон обязывает знать своих клиентов. Данные загружают в приложении или на сайте самой компании, и это нормально." },
+  { q: "При крупном переводе вас просят пояснить, откуда деньги. Как поступить?",
+    o: ["Честно ответить в приложении: это стандартный вопрос", "Закрыть счёт из-за обиды", "Придумать любую причину, чтобы отстали"],
+    why: "Это вопрос об источнике средств. Он защищает честных клиентов от нелегальных денег. Честный ответ ускоряет проверку." },
+  { q: "Звонит «сотрудник службы безопасности» и просит код из СМС «для проверки». Что это?",
+    o: ["Мошенник: настоящие сотрудники кодов не просят", "Обычная проверка комплаенса", "Нужно быстро назвать код"],
+    why: "Настоящий комплаенс НИКОГДА не просит пароли, коды из СМС и данные карты. Завершите звонок и зайдите в приложение сами." },
+  { q: "Вам пишут: «Срочно переведите деньги на безопасный счёт, иначе их украдут!»",
+    o: ["Это мошенники: проверки так не работают", "Перевести, раз срочно", "Перевести хотя бы половину"],
+    why: "Ни одна проверка не требует переводить деньги на другой счёт. Спешка и страх — главное оружие мошенников." },
+  { q: "Вас просят назвать секретную фразу кошелька (seed-фразу) «для проверки».",
+    o: ["Никому не сообщать: по ней забирают все средства", "Назвать: это же служба проверки", "Отправить в чат поддержки"],
+    why: "Секретную фразу не должен знать никто: ни биржа, ни комплаенс, ни «поддержка». Кто просит, тот хочет украсть." },
+  { q: "В приложении сказано: вывод временно приостановлен, нужна проверка операции. Что это?",
+    o: ["Нормально: так проверяют необычные операции", "Точно взлом", "Повод удалить приложение"],
+    why: "Иногда операцию нужно проверить, и это защищает вас. Отвечайте на вопросы в самом приложении, обычно всё решается быстро." },
+  { q: "В письме ссылка: «Пройдите проверку за час, иначе блокировка!» Что сделать?",
+    o: ["Не нажимать, а зайти в приложение самостоятельно", "Быстро нажать: час — это мало", "Переслать письмо знакомым"],
+    why: "Ссылки в письмах могут вести на поддельные сайты. Проверяйте сообщения только в приложении или на сайте, который открыли сами." },
+  { q: "«Комплаенс» просит установить программу удалённого доступа, чтобы «помочь с проверкой».",
+    o: ["Отказаться: так получают контроль над устройством", "Установить, раз просят", "Установить, а потом удалить"],
+    why: "Через такие программы мошенники видят ваш экран и переводят деньги за вас. Настоящей проверке это не нужно." },
+  { q: "Вам говорят: «Оплатите комиссию за проверку, и мы разблокируем счёт». Это...",
+    o: ["Мошенничество: проверка бесплатная", "Нормальная плата за услугу", "Налог, который нужно оплатить"],
+    why: "Проверки клиентов компания проводит за свой счёт. Просьба заплатить за «разблокировку» — признак обмана." },
+  { q: "Незнакомец в мессенджере: «Я из комплаенса биржи, пришлите документы мне». Что делать?",
+    o: ["Не отправлять: настоящий запрос придёт в приложении", "Отправить: он же из комплаенса", "Отправить только фото паспорта"],
+    why: "Настоящие запросы приходят в приложении или с официальной почты. Личное сообщение от «сотрудника» — повод насторожиться." },
+  { q: "Банк спрашивает цель крупного перевода. Как это понимать?",
+    o: ["Стандартный вопрос: так выявляют отмывание денег", "Банк мне не доверяет", "Это попытка украсть деньги"],
+    why: "Такие вопросы задают всем. Они помогают отсеять преступников, а честным клиентам — быстрее получить перевод." },
+  { q: "Вам сомнительно позвонили «из банка». Как лучше всего проверить?",
+    o: ["Завершить звонок и набрать номер с карты или сайта", "Спросить у звонящего, настоящий ли он", "Продиктовать номер карты, чтобы нашли вас"],
+    why: "Мошенники умеют подделывать номера и голос. Перезвоните сами по номеру из официального источника." },
+  { q: "Зачем комплаенс спрашивает о работе и доходах?",
+    o: ["Понять, откуда деньги, и защитить от отмывания", "Узнать ваш пароль", "Из любопытства"],
+    why: "Это часть знакомства с клиентом. Пароли, коды и секретные фразы в анкету не входят. Если их просят, это красный флаг." },
+  { q: "Какой запрос настоящего комплаенса — НОРМАЛЬНЫЙ?",
+    o: ["Загрузить документ в приложении", "Продиктовать код из СМС", "Установить программу удалённого доступа"],
+    why: "Документы и ответы передаются через официальное приложение. Коды, пароли и установка программ — никогда." },
+  { q: "Вам сказали: «Никому не говорите о проверке, это секрет!» Что это?",
+    o: ["Тревожный знак: мошенники просят молчать", "Обычное правило компании", "Вежливая просьба"],
+    why: "Мошенники отрезают человека от близких, чтобы никто не остановил. Обсудите с родными и проверьте в приложении." },
+  { q: "Какое главное правило защиты от мошенников?",
+    o: ["Не спешить: самому зайти в приложение и всё проверить", "Делать, что говорят, если голос уверенный", "Отвечать на звонки с любых номеров"],
+    why: "Спешка — главный приём мошенников. Остановитесь, проверьте через официальный канал, посоветуйтесь." },
+  { q: "Вам звонят: «На ваше имя оформляют кредит, назовите код, чтобы отменить».",
+    o: ["Прервать звонок: код нужен только мошенникам", "Назвать код, чтобы отменить кредит", "Попросить перезвонить позже и дать свой номер"],
+    why: "Код из СМС — это ключ к вашему счёту. Реальные проблемы решаются в приложении или в отделении." },
+  { q: "Сервис просит подтвердить личность видеозвонком внутри официального приложения.",
+    o: ["Нормально: это один из способов проверки", "Подозрительно: видео давать нельзя", "Лучше сделать это в мессенджере"],
+    why: "Видеоверификация — стандартная практика. Главное, чтобы она проходила в официальном приложении, а не в сторонних чатах." },
+  { q: "«Поддержка» в соцсети предлагает разблокировать вывод, если вы переведёте деньги на их кошелёк.",
+    o: ["Мошенничество: поддержка так не работает", "Выглядит логично", "Можно перевести небольшую сумму"],
+    why: "Официальная поддержка не просит переводов на личные кошельки. Обращайтесь только через приложение или сайт компании." },
+  { q: "Вас просят подтвердить адрес проживания документом в приложении. Как отнестись?",
+    o: ["Спокойно: это стандартная проверка", "Отказаться: адрес — личное", "Отправить документ на личную почту «сотрудника»"],
+    why: "Подтверждение адреса — обычная часть проверки. Документы загружают только в приложение компании." },
+  { q: "Письмо от «комплаенса» пришло с бесплатной почты и с грамматическими ошибками.",
+    o: ["Не отвечать и проверить запрос в приложении", "Ответить и отправить документы", "Позвонить по номеру из письма"],
+    why: "Официальные письма приходят с домена компании. Номера и ссылки из подозрительных писем не используйте." },
+  { q: "Вам предлагают «выгодную инвестицию» от имени биржи и просят перевести на личную карту сотрудника.",
+    o: ["Отказать: платежи идут только на официальные реквизиты", "Перевести: сотрудник же из биржи", "Перевести, но потребовать расписку"],
+    why: "Компании принимают платежи только на свои официальные счета. Личная карта сотрудника — явный признак обмана." },
+  { q: "Вы случайно назвали код из СМС мошенникам. Что делать в первую очередь?",
+    o: ["Сразу связаться с банком или биржей по официальному каналу", "Подождать: вдруг ничего не случится", "Удалить переписку и забыть"],
+    why: "Чем быстрее вы сообщите, тем больше шансов остановить операцию. Скрывать и тянуть время не нужно." },
+  { q: "Проверка вашей операции занимает несколько дней. Это допустимо?",
+    o: ["Да: сложные случаи требуют времени", "Нет, это точно обман", "Только если сказали платить за ускорение"],
+    why: "Сложные проверки могут идти дольше. Настоящая компания не торопит и не просит платить за ускорение." }
+];
+
+const QTAG = ["Проверка личности (KYC)", "Вопрос об источнике средств", "Коды из СМС", "Переводы «на безопасный счёт»", "Секретная фраза кошелька", "Нормальные проверки операций",
+  "Поддельные письма и ссылки", "Удалённый доступ", "Платная «разблокировка»", "Запросы в мессенджерах", "Нормальные проверки операций", "Звонки «из банка»",
+  "Вопрос об источнике средств", "Что просит настоящий комплаенс", "Давление и секретность", "Давление и секретность", "Коды из СМС", "Проверка личности (KYC)",
+  "Запросы в мессенджерах", "Проверка личности (KYC)", "Поддельные письма и ссылки", "Переводы «на безопасный счёт»", "Коды из СМС", "Давление и секретность"];
+QUIZ.forEach((q, i) => { q.tag = QTAG[i]; });
+const TIPS = {
+  "Проверка личности (KYC)": "Документы и селфи загружайте только в официальном приложении или на сайте компании. Это стандартная проверка.",
+  "Вопрос об источнике средств": "Вопрос «откуда деньги» задают всем. Отвечайте честно и только в приложении: так проверка проходит быстрее.",
+  "Коды из СМС": "Коды из СМС, пароли и данные карты не нужны никому, даже «службе безопасности». Завершите звонок и зайдите в приложение сами.",
+  "Переводы «на безопасный счёт»": "Проверка никогда не требует переводить деньги на другой счёт или личную карту сотрудника.",
+  "Секретная фраза кошелька": "Секретную (seed) фразу не знает и не просит никто, кроме мошенников. Не вводите её нигде по просьбе «поддержки».",
+  "Нормальные проверки операций": "Временная проверка операции и вопрос о цели перевода — это норма. Все вопросы решаются в приложении.",
+  "Поддельные письма и ссылки": "Не переходите по ссылкам из писем и не пишите на адреса из них. Откройте приложение или сайт сами.",
+  "Удалённый доступ": "Не устанавливайте программы удалённого доступа по просьбе «поддержки»: через них видят экран и переводят деньги.",
+  "Платная «разблокировка»": "Проверка клиентов бесплатна. Просьба заплатить за разблокировку или ускорение — признак обмана.",
+  "Запросы в мессенджерах": "Настоящие запросы приходят в приложении или с официальной почты, а не в личных сообщениях от «сотрудников».",
+  "Звонки «из банка»": "Завершите звонок и перезвоните сами по номеру с карты или с официального сайта.",
+  "Что просит настоящий комплаенс": "Документы и ответы в приложении — да. Коды, пароли, программы удалённого доступа — никогда.",
+  "Давление и секретность": "Спешка и просьба молчать — главный признак мошенников. Остановитесь, проверьте в приложении, посоветуйтесь с близкими."
+};
+const GOOD_HINTS = [
+  "Это честный клиент. Блокировать его без причины нельзя: он потеряет доступ к своим деньгам.",
+  "Ложная тревога тоже вредит: хорошая защита не мешает обычным людям. Милые картинки — пропускайте.",
+  "Не всё подряд подозрительно. Сбивайте только угрозы: у них есть тревожные названия."
+];
+const CERT_BTN = { x: 40, y: 548, w: 300, h: 42 };
+const ACH = [
+  { id: "first",      t: "Первая поимка",          d: "Остановите первую угрозу" },
+  { id: "streak10",   t: "Меткий глаз",            d: "10 угроз подряд без промаха и ложных тревог" },
+  { id: "cleanlevel", t: "Чистая работа",          d: "Пройдите уровень без пропусков и ложных тревог" },
+  { id: "quiz1",      t: "Первый оберег",          d: "Ответьте верно на все вопросы уровня" },
+  { id: "amulet5",    t: "Коллекционер оберегов",  d: "Соберите 5 оберегов" },
+  { id: "finish",     t: "Защитник честных денег", d: "Пройдите все " + MAXLVL + " уровней" },
+  { id: "quizall",    t: "Квиз без ошибок",        d: "Пройдите игру, ответив верно на все вопросы" },
+  { id: "nolost",     t: "Железная защита",        d: "Пройдите игру, не потеряв ни одной жизни" }
+];
+try { ach = JSON.parse(localStorage.getItem("amlAch") || "{}") || {}; } catch (e) { ach = {}; }
+function achCount() { return ACH.filter(a => ach[a.id]).length; }
+function award(id) {
+  if (ach[id]) return;
+  ach[id] = 1; try { localStorage.setItem("amlAch", JSON.stringify(ach)); } catch (e) {}
+  achQ.push(id); seq([[880, 0, .1], [1175, .1, .1], [1568, .2, .3]], "triangle", .05);
+}
+function openAch() { achBack = state; state = "ach"; }
+function drawAchPopup() {
+  if (!achShow) return;
+  const a = ACH.find(x => x.id === achShow.a); if (!a) return;
+  ctx.fillStyle = "rgba(15,15,27,.92)"; ctx.fillRect(540, 112, 350, 52);
+  ctx.fillStyle = P.y; ctx.fillRect(540, 112, 4, 52);
+  text("ДОСТИЖЕНИЕ ОТКРЫТО", 556, 132, 12, P.y);
+  text(a.t, 556, 154, 16, P.w);
+}
+
+// share: native share sheet with the PNG when possible, otherwise copy the text
+function shareMsg(msg) { shareNote = { text: msg, until: Date.now() + 4500 }; }
+async function shareCert() {
+  const url = /^https?:/.test(location.href) ? location.href.split("#")[0] : "";
+  const txt = "Мой результат в тренажёре «Честные деньги»: счёт " + score + ", тест " + quizRight + " из " + quizTotal + ". Получен сертификат «Защитник честных денег»! Учимся отличать запросы комплаенса от мошенников" + (url ? ": " + url : ".");
+  try {
+    const c = document.createElement("canvas"); c.width = 900; c.height = 540; drawCert(c.getContext("2d"), playerName);
+    const blob = await new Promise(r => c.toBlob(r));
+    const file = blob ? new File([blob], "sertifikat-chestnye-dengi.png", { type: "image/png" }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: txt, title: "Честные деньги" }); return; }
+    if (navigator.share) { await navigator.share(url ? { text: txt, url: url, title: "Честные деньги" } : { text: txt, title: "Честные деньги" }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  try { await navigator.clipboard.writeText(txt); shareMsg("Текст скопирован — вставьте его в мессенджер"); }
+  catch (e) { shareMsg("Не удалось поделиться. Сохраните PNG кнопкой слева"); }
+}
+const SHARE_BTN = { x: 360, y: 548, w: 250, h: 42 };
+
+function topicsWrong() { return Object.keys(wrongTopics).sort((a, b) => wrongTopics[b] - wrongTopics[a]); }
+function openReview(back) { reviewBack = back; state = "review"; }
+function leaveReview() { state = reviewBack === "win" ? "win" : "over"; }
+function confirmName() {
+  playerName = playerName.trim().slice(0, 24);
+  state = "help";
+}
+function nameKey(e) {
+  if (e.key === "Enter") confirmName();
+  else if (e.key === "Escape") state = "title";
+  else if (e.key === "Backspace") playerName = playerName.slice(0, -1);
+  else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && playerName.length < 24) playerName += e.key;
+}
+function tapName() {
+  let r = playerName;
+  try { r = prompt("Как вас зовут? Имя будет на сертификате.", playerName); } catch (e) {}
+  if (r === null) return;
+  playerName = r; confirmName();
+}
+function saveProgress() { try { localStorage.setItem("amlUnlocked", unlocked); } catch (e) {} }
+function openLevels() { lvlSel = Math.min(unlocked, MAXLVL) - 1; state = "levels"; }
+function levelsKey(k) {
+  if (k === "ArrowRight") lvlSel = Math.min(unlocked - 1, lvlSel + 1);
+  else if (k === "ArrowLeft") lvlSel = Math.max(0, lvlSel - 1);
+  else if (k === "ArrowDown") { if (lvlSel + 5 <= unlocked - 1) lvlSel += 5; }
+  else if (k === "ArrowUp") lvlSel = Math.max(0, lvlSel - 5);
+  else if (k === "Enter") start(lvlSel + 1);
+  else if (k === "Escape") state = "title";
+}
+function levelsTap(x, y) {
+  if (y > 550 && x < 330) { state = "title"; return; }
+  for (let i = 0; i < MAXLVL; i++) {
+    const tx = 75 + (i % 5) * 150, ty = (MAXLVL <= 5 ? 230 : 170) + Math.floor(i / 5) * 150;
+    if (x >= tx && x <= tx + 130 && y >= ty && y <= ty + 120 && i < unlocked) { start(i + 1); return; }
+  }
+}
+function saveCert() {
+  const name = playerName;
+  const c = document.createElement("canvas"); c.width = 900; c.height = 540;
+  drawCert(c.getContext("2d"), name);
+  c.toBlob(b => {
+    if (!b) return;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "sertifikat-chestnye-dengi.png";
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  });
+}
+
+function startQuiz() {
+  quizN = level >= MAXLVL ? 3 : 2; quizIdx = 0; lvlRight = 0; openQuiz();
+}
+function openQuiz() {
+  if (!quizDeck.length) quizDeck = QUIZ.map((_, i) => i).sort(() => Math.random() - 0.5);
+  const it = QUIZ[quizDeck.pop()];
+  const opts = it.o.map((t, i) => ({ t, ok: i === 0 })).sort(() => Math.random() - 0.5);
+  quizIdx++;
+  quiz = { q: it.q, tag: it.tag, opts, why: it.why, sel: 0, done: false, picked: -1, right: false, top: 200, idx: quizIdx, n: quizN };
+  keys.clear(); ptr.on = false; state = "quiz"; beep(700, .1); beep(900, .1);
+}
+function quizAnswer(i) {
+  if (!quiz || quiz.done || !quiz.opts[i]) return;
+  quiz.done = true; quiz.picked = i; quiz.right = quiz.opts[i].ok; quizTotal++;
+  if (quiz.right) { quizRight++; lvlRight++; score += 300; beep(880, .12); beep(1320, .2); }
+  else { wrongTopics[quiz.tag] = (wrongTopics[quiz.tag] || 0) + 1; beep(180, .3, "sawtooth", .07); }
+}
+function nextAfterQuiz() {
+  quiz = null; keys.clear();
+  if (quizIdx < quizN) { openQuiz(); return; }
+  safeAll = lvlRight === quizN;
+  if (safeAll) { amulets++; award("quiz1"); if (amulets >= 5) award("amulet5"); lives = Math.min(6, lives + 1); score += 500; beep(880, .12); beep(1100, .12); beep(1320, .25); }
+  state = "safe";
+}
+function advance() {
+  if (state === "safe") {
+    if (level >= MAXLVL) {
+      unlocked = MAXLVL; saveProgress();
+      award("finish"); if (quizTotal && quizRight === quizTotal) award("quizall"); if (lost === 0) award("nolost");
+      fanfare();
+      if (score > best) { best = score; try { localStorage.setItem("amlBest", best); } catch (e) {} }
+      if (topicsWrong().length) openReview("win"); else state = "win";
+    } else {
+      level++; unlocked = Math.max(unlocked, level); saveProgress(); lives = Math.max(lives, 3);
+      lvlCaught = 0; lvlMiss = 0; lvlFP = 0; spawnT = 2.5; state = "play"; keys.clear();
+      showBanner("УРОВЕНЬ " + level + " ИЗ " + MAXLVL, FACTS[(level - 1) % FACTS.length]);
+    }
+  } else if (state === "win") { playerName = ""; state = "name"; }
+}
+function quizKey(k) {
+  if (!quiz) { state = "play"; return; }
+  if (quiz.done) { if (k === "Enter") nextAfterQuiz(); return; }
+  if (k === "1" || k === "2" || k === "3") quizAnswer(+k - 1);
+  else if (k === "ArrowUp") quiz.sel = (quiz.sel + 2) % 3;
+  else if (k === "ArrowDown") quiz.sel = (quiz.sel + 1) % 3;
+  else if (k === "Enter") quizAnswer(quiz.sel);
+}
+
+function wrap(str, n) {
+  const out = []; let line = "";
+  str.split(" ").forEach(w => { if ((line + " " + w).trim().length > n) { out.push(line); line = w; } else line = (line + " " + w).trim(); });
+  if (line) out.push(line); return out;
+}
+function showBanner(title, fact) { banner = { title, fact: fact || FACTS[(level - 1) % FACTS.length], life: 4.5 }; }
+function finishLevel() {
+  score += 300; txs = []; shots = []; pus = [];
+  if (!lvlMiss && !lvlFP) award("cleanlevel");
+  levelJingle();
+  startQuiz();
+}
+
+// ---------- Rendering ----------
+function drawBackground() {
+  g.fillStyle = P.n; g.fillRect(0, 0, W, H);
+  g.fillStyle = "#222845";
+  for (let i = 0; i < 10; i++) { const h = 30 + ((i * 37) % 50); g.fillRect(i * 30 + 2, 176 - h, 24, h); }
+  for (let i = 0; i < 10; i++) {
+    const h = 30 + ((i * 37) % 50);
+    for (let j = 0; j < h - 6; j += 6) { g.fillStyle = ((i + j + ((t * 2) | 0)) % 5 === 0) ? P.B : "#2f3866"; g.fillRect(i * 30 + 6, 176 - h + 4 + j, 3, 2); g.fillRect(i * 30 + 14, 176 - h + 4 + j, 3, 2); }
+  }
+  stars.forEach(s => { g.fillStyle = Math.sin(t * 2 + s.p) > 0 ? P.s : P.S; g.fillRect(s.x | 0, s.y | 0, 1, 1); });
+  g.fillStyle = "#1d3b3a";
+  rain.forEach(r => g.fillRect(r.x | 0, r.y | 0, 1, r.l));
+  g.fillStyle = P.r;
+  for (let x = 0; x < W; x += 6) g.fillRect(x, 175, 3, 1);
+  g.fillStyle = P.S; g.fillRect(0, 193, W, 7);
+  g.fillStyle = P.n; for (let x = 0; x < W; x += 8) g.fillRect(x, 195, 4, 1);
+}
+
+function text(str, x, y, size, col, align, c) {
+  c = c || ctx;
+  c.font = "bold " + size + "px 'Courier New', monospace";
+  c.textAlign = align || "left"; c.fillStyle = "#000"; c.fillText(str, x + 2, y + 2);
+  c.fillStyle = col; c.fillText(str, x, y);
+}
+
+// big "everything is safe" picture: shield with a lock, orbiting cute icons, sparkles
+function drawSafe(cx, cy, ok, c, sc, anim) {
+  c = c || ctx; sc = sc || 1; if (anim === undefined) anim = true;
+  const pulse = anim ? Math.sin(t * 2) * 6 : 0;
+  c.save(); c.translate(cx, cy); c.scale(sc, sc);
+  c.globalAlpha = ok ? 1 : 0.45;
+  [170, 135, 105].forEach((r, i) => { c.fillStyle = "rgba(65,166,246," + (0.06 + i * 0.05) + ")"; c.beginPath(); c.arc(0, 0, r + pulse, 0, 6.3); c.fill(); });
+  const shield = k => {
+    c.beginPath(); c.moveTo(0, -105 * k);
+    c.lineTo(85 * k, -75 * k); c.lineTo(85 * k, 5 * k);
+    c.quadraticCurveTo(85 * k, 75 * k, 0, 115 * k);
+    c.quadraticCurveTo(-85 * k, 75 * k, -85 * k, 5 * k);
+    c.lineTo(-85 * k, -75 * k); c.closePath();
+  };
+  shield(1); c.fillStyle = P.w; c.fill();
+  shield(0.92); const gr = c.createLinearGradient(0, -100, 0, 110); gr.addColorStop(0, P.B); gr.addColorStop(1, P.b); c.fillStyle = gr; c.fill();
+  c.strokeStyle = P.w; c.lineWidth = 9; c.beginPath(); c.arc(0, -22, 24, Math.PI, 0); c.stroke();
+  c.fillStyle = P.y; c.fillRect(-38, -22, 76, 60);
+  c.fillStyle = P.R; c.fillRect(-38, 28, 76, 10);
+  c.fillStyle = P.k; c.beginPath(); c.arc(0, 3, 8, 0, 6.3); c.fill(); c.fillRect(-3, 6, 6, 18);
+  c.globalAlpha = 1;
+  if (ok) {
+    c.fillStyle = P.g; c.beginPath(); c.arc(70, 80, 30, 0, 6.3); c.fill();
+    c.strokeStyle = P.w; c.lineWidth = 8; c.lineCap = "round"; c.lineJoin = "round";
+    c.beginPath(); c.moveTo(56, 80); c.lineTo(66, 91); c.lineTo(86, 68); c.stroke();
+    c.lineCap = "butt"; c.lineJoin = "miter";
+    if (anim) {
+      [heartG, starG, flowerG, iceG].forEach((s2, i) => { const a = t * 0.8 + i * 1.5708; c.drawImage(s2, (Math.cos(a) * 200 - 24) | 0, (Math.sin(a) * 120 - 24) | 0, 48, 48); });
+      for (let i = 0; i < 10; i++) {
+        if (Math.sin(t * 4 + i * 1.7) <= 0) continue;
+        const a = i * 0.63 + t * 0.5, r = 130 + ((i * 37) % 60), x = Math.cos(a) * r * 1.4, y = Math.sin(a) * r * 0.9;
+        c.fillStyle = P.w; c.fillRect(x, y, 4, 4); c.fillRect(x - 4, y + 1, 12, 2); c.fillRect(x + 1, y - 4, 2, 12);
+      }
+    }
+  }
+  c.restore();
+}
+
+// shareable certificate, 900x540 (also exported to PNG)
+function drawCert(c, name) {
+  c.imageSmoothingEnabled = false;
+  c.fillStyle = "#14182b"; c.fillRect(0, 0, 900, 540);
+  c.fillStyle = "rgba(65,166,246,.08)";
+  for (let y = 20; y < 540; y += 24) for (let x = 20; x < 900; x += 24) c.fillRect(x, y, 2, 2);
+  c.strokeStyle = P.y; c.lineWidth = 6; c.strokeRect(18, 18, 864, 504);
+  c.strokeStyle = P.R; c.lineWidth = 2; c.strokeRect(30, 30, 840, 480);
+  [[52, 52], [848, 52], [52, 488], [848, 488]].forEach(([x, y]) => c.drawImage(starG, x - 18, y - 18, 36, 36));
+  text("СЕРТИФИКАТ", 450, 92, 22, P.B, "center", c);
+  text("ЗАЩИТНИК ЧЕСТНЫХ ДЕНЕГ", 450, 150, 44, P.y, "center", c);
+  text("выдан", 450, 192, 16, P.s, "center", c);
+  text(name || "Участник тренажёра", 450, 236, 34, P.w, "center", c);
+  c.fillStyle = P.S; c.fillRect(250, 250, 400, 2);
+  text("за прохождение всех " + MAXLVL + " уровней тренажёра по финансовой безопасности", 450, 282, 16, P.s, "center", c);
+  drawSafe(450, 372, true, c, 0.55, false);
+  text("Счёт: " + score, 345, 350, 20, P.y, "right", c);
+  text("Угроз поймано: " + kills, 345, 382, 17, P.g, "right", c);
+  text("Тест: " + quizRight + " из " + quizTotal, 555, 350, 20, P.B, "left", c);
+  text("Оберегов: " + amulets, 555, 382, 17, P.B, "left", c);
+  const ratio = quizTotal ? quizRight / quizTotal : 0;
+  text("Уровень знаний: " + (ratio >= 0.85 ? "ВЫСОКИЙ" : ratio >= 0.6 ? "ХОРОШИЙ" : "БАЗОВЫЙ"), 450, 462, 18, P.w, "center", c);
+  text("Настоящий комплаенс не просит пароли и коды из СМС.", 450, 488, 14, P.s, "center", c);
+  text("Достижений: " + achCount() + " из " + ACH.length + "  ·  " + new Date().toLocaleDateString("ru-RU"), 450, 506, 12, P.S, "center", c);
+}
+
+function render() {
+  g.imageSmoothingEnabled = false;
+  drawBackground();
+  pus.forEach(p => g.drawImage(p.type.spr, p.x | 0, p.y | 0));
+  g.fillStyle = P.y; shots.forEach(s => { g.fillRect(s.x | 0, s.y | 0, 2, 5); g.fillStyle = P.w; g.fillRect(s.x | 0, s.y | 0, 1, 2); g.fillStyle = P.y; });
+  if (player && state !== "title" && state !== "help") {
+    g.drawImage(player.mv && ((player.fa * 9) | 0) % 2 ? officer2 : officer, player.x | 0, (player.y + (player.mv ? 0 : (Math.sin(t * 4) > 0.6 ? -0 : 0))) | 0);
+    if (player.fl > 0) { g.fillStyle = P.y; g.fillRect((player.x + 4) | 0, (player.y - 3) | 0, 4, 2); g.fillStyle = P.w; g.fillRect((player.x + 5) | 0, (player.y - 3) | 0, 2, 1); }
+  }
+  parts.forEach(p => { g.fillStyle = p.col; g.fillRect(p.x | 0, p.y | 0, 2, 2); });
+  g.fillStyle = P.k; g.fillRect(0, 0, W, 13);
+  g.fillStyle = P.S; g.fillRect(0, 13, W, 1);
+  if (state !== "title" && state !== "help") for (let i = 0; i < lives; i++) g.drawImage(heart, W - 10 - i * 9, 3);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() - .5) * 8, (Math.random() - .5) * 8);
+  ctx.drawImage(low, 0, 0, W * S, H * S);
+  if (state !== "title" && state !== "help") {
+    for (const q of txs) {
+      const cx = (q.x + q.sz / 2) * S, cy = (q.y + q.sz / 2) * S;
+      ctx.fillStyle = q.type.bad ? "rgba(177,62,83,.30)" : "rgba(255,158,196,.18)";
+      ctx.beginPath(); ctx.arc(cx, cy, q.type.bad ? 36 : 32, 0, 6.3); ctx.fill();
+      const bob = Math.sin(t * (q.type.bad ? 7 : 3) + q.ph) * 2, bx = (q.x * S) | 0, by = ((q.y * S) + bob) | 0;
+      ctx.drawImage(q.type.spr, bx, by, q.sz * S, q.sz * S);
+      const eyes = EYES[q.type.id];
+      if (eyes) {
+        if (q.seed === undefined) q.seed = Math.random() * 5;
+        const pp = q.sz * S / 12, on = ((t * 1.2 + q.seed) % 1) < 0.6;
+        eyes.forEach(e => {
+          if (on) { ctx.fillStyle = "rgba(255,60,60,.35)"; ctx.fillRect(bx + e[0] * pp - 3, by + e[1] * pp - 3, e[2] * pp + 6, pp + 6); }
+          ctx.fillStyle = on ? "#ff3030" : P.k; ctx.fillRect(bx + e[0] * pp, by + e[1] * pp, e[2] * pp, pp);
+          if (on) { ctx.fillStyle = P.y; ctx.fillRect(bx + e[0] * pp, by + e[1] * pp, 2, 2); }
+        });
+      }
+      if (q.tut && tutT > 0) text(q.tut === "bad" ? "УГРОЗА — СТРЕЛЯЙТЕ!" : "КЛИЕНТ — ПРОПУСТИТЕ", cx, q.y * S - 10, 13, q.tut === "bad" ? P.R : P.o, "center");
+      if (q.type.bad) text(q.name, cx, (q.y + q.sz) * S + 14, 11, q.type.col, "center");
+      else if (Math.sin(t * 5 + q.ph) > 0.7) { ctx.fillStyle = P.w; ctx.fillRect(cx + 22, cy - 26, 4, 4); ctx.fillRect(cx - 28, cy - 10, 3, 3); }
+    }
+    floaters.forEach(f => text(f.text, f.x * S, f.y * S, 12, f.col));
+  }
+  ctx.restore();
+  if (flash > 0 && state === "play") { ctx.fillStyle = "rgba(177,62,83," + Math.min(.45, flash * 1.4) + ")"; ctx.fillRect(0, 0, 900, 600); }
+
+  if (state !== "title" && state !== "help") {
+    text("ОЧКИ " + String(score).padStart(6, "0"), 10, 30, 16, P.w);
+    text("УРОВЕНЬ " + level + "/" + MAXLVL, 190, 30, 16, P.B);
+    text("УГРОЗЫ " + lvlCaught + "/" + GOAL, 345, 30, 16, P.y);
+    ctx.drawImage(amulet, 480, 8, 24, 24); text("x" + amulets, 510, 30, 16, P.B);
+    text("ЖИЗНИ", 640, 30, 16, P.s);
+    if (muted) text("ЗВУК ВЫКЛ (M)", 890, 590, 12, P.S, "right");
+    let hy = 70;
+    if (spreadT > 0) { text("ТРОЙНОЙ ВЫСТРЕЛ " + Math.ceil(spreadT) + "s", 10, hy, 13, P.B); hy += 18; }
+    if (freezeT > 0) { text("ЗАМЕДЛЕНИЕ " + Math.ceil(freezeT) + "s", 10, hy, 13, P.g); }
+    if (tutT > 0 && state === "play" && !toast) text("Обучение: ← → движение · ПРОБЕЛ — огонь", 450, 78, 15, P.y, "center");
+    if (toast && state === "play") {
+      ctx.fillStyle = "rgba(15,15,27,.9)"; ctx.fillRect(40, 48, 820, 56);
+      ctx.fillStyle = P.o; ctx.fillRect(40, 48, 820, 3);
+      wrap(toast.text, 88).forEach((ln, i) => text(ln, 450, 74 + i * 20, 14, P.w, "center"));
+    }
+    if (banner && state === "play") {
+      ctx.fillStyle = "rgba(15,15,27,.85)"; ctx.fillRect(40, 225, 820, 124);
+      ctx.fillStyle = P.y; ctx.fillRect(40, 225, 820, 3); ctx.fillRect(40, 346, 820, 3);
+      text(banner.title, 450, 270, 34, P.y, "center");
+      wrap(banner.fact, 82).forEach((ln, i) => text(ln, 450, 306 + i * 22, 16, P.w, "center"));
+    }
+  }
+
+  if (state === "title") {
+    ctx.fillStyle = "rgba(15,15,27,.86)"; ctx.fillRect(0, 0, 900, 600);
+    text("ЧЕСТНЫЕ ДЕНЬГИ", 450, 115, 58, P.y, "center");
+    text("тренажёр по финансовой безопасности", 450, 152, 20, P.B, "center");
+    ctx.drawImage(officer, 414, 175, 72, 72);
+    text("Вы — специалист службы комплаенса.", 450, 292, 20, P.w, "center");
+    text("Ваша задача — защищать клиентов и компанию от мошенничества", 450, 328, 16, P.s, "center");
+    text("и денег незаконного происхождения: блокировать подозрительные", 450, 351, 16, P.s, "center");
+    text("операции и пропускать законные.", 450, 374, 16, P.s, "center");
+    text(MAXLVL + " уровней. После каждого — короткий тест о том, как отличить", 450, 418, 16, P.w, "center");
+    text("запрос комплаенса от действий мошенников.", 450, 441, 16, P.w, "center");
+    text("← →  движение      ПРОБЕЛ  огонь", 450, 495, 18, P.y, "center");
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ДАЛЕЕ", 450, 555, 26, P.w, "center");
+    if (best) text("РЕКОРД " + best, 880, 585, 14, P.s, "right");
+    text("L — выбор уровня" + (unlocked > 1 ? " (открыто " + unlocked + ")" : ""), 20, 585, 14, P.s);
+    text("A — достижения (" + achCount() + "/" + ACH.length + ")", 20, 563, 14, P.s);
+  } else if (state === "help") {
+    ctx.fillStyle = "rgba(15,15,27,.95)"; ctx.fillRect(0, 0, 900, 600);
+    text("КАК ИГРАТЬ", 450, 48, 32, P.y, "center");
+    GOODS.forEach((gd, i) => ctx.drawImage(gd.spr, 50 + i * 48, 66, 40, 40));
+    text("Милые картинки — честные клиенты. Пропускайте:", 260, 92, 16, P.o);
+    text("ошибочный выстрел — штраф.", 260, 112, 14, P.s);
+    text("Подозрительное — сбивайте:", 50, 148, 15, P.R);
+    const rows = [
+      [B("skull"),  "САНКЦИОННАЯ ТРАНЗАКЦИЯ — перевод лицу из санкционного списка", P.w],
+      [B("spider"), "ДАРКНЕТ — платёж на нелегальную площадку", P.p],
+      [B("mask"),   "ВЫВОД МОШЕННИКУ — средства уходят обманщику", P.y],
+      [B("bag"),    "ГРЯЗНЫЕ ДЕНЬГИ — незаконное происхождение (2 выстрела)", P.l],
+      [B("snake"),  "ЗАПУТАННЫЙ СЛЕД — цепочка переводов скрывает источник", P.l]
+    ];
+    rows.forEach((r, i) => { ctx.drawImage(r[0].spr, 50, 160 + i * 44, 40, 40); text(r[1], 105, 187 + i * 44, 15, r[2]); });
+    const py = 395;
+    POWERS.forEach((p, i) => { ctx.drawImage(p.spr, 70 + i * 270, py, 33, 33); text(p.label, 112 + i * 270, py + 22, 13, P.w); });
+    text("Угроза дошла до красной линии — минус жизнь.", 70, py + 60, 15, P.R);
+    text("Сбейте " + GOAL + " угроз — уровень пройден, затем тест из 2–3 вопросов.", 70, py + 84, 15, P.y);
+    text("Все ответы верны — защита усиливается: +1 жизнь и оберег.", 70, py + 108, 15, P.B);
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ИГРАТЬ", 450, 585, 24, P.w, "center");
+  } else if (state === "quiz" && quiz) {
+    ctx.fillStyle = "rgba(15,15,27,.95)"; ctx.fillRect(0, 0, 900, 600);
+    ctx.drawImage(amulet, 215, 26, 36, 36);
+    text("ОБЕРЕГ ОТ МОШЕННИКОВ", 450, 56, 30, P.y, "center");
+    text("Уровень " + level + " пройден · вопрос " + quiz.idx + " из " + quiz.n, 450, 86, 15, P.s, "center");
+    const ql = wrap(quiz.q, 62);
+    ql.forEach((ln, i) => text(ln, 450, 130 + i * 28, 20, P.w, "center"));
+    const top = 130 + ql.length * 28 + 6; quiz.top = top;
+    quiz.opts.forEach((o, i) => {
+      const y = top + i * 56;
+      let bg = "#1a1c2c", bd = P.S;
+      if (!quiz.done && i === quiz.sel) { bg = "#29366f"; bd = P.B; }
+      if (quiz.done && o.ok) { bg = "#1b4d3a"; bd = P.g; }
+      else if (quiz.done && i === quiz.picked) { bg = "#5a1f2e"; bd = P.r; }
+      ctx.fillStyle = bd; ctx.fillRect(60, y, 780, 46); ctx.fillStyle = bg; ctx.fillRect(63, y + 3, 774, 40);
+      text((i + 1) + ".  " + o.t, 78, y + 29, 16, P.w);
+    });
+    const by = top + 3 * 56 + 22;
+    if (quiz.done) {
+      text(quiz.right ? "ВЕРНО!  +300 очков" : "Не совсем. Вот как на самом деле:", 450, by, 19, quiz.right ? P.g : P.R, "center");
+      wrap(quiz.why, 80).forEach((ln, i) => text(ln, 450, by + 28 + i * 21, 15, P.s, "center"));
+      if (((t * 2) | 0) % 2 === 0) text("ENTER — ДАЛЬШЕ", 450, 585, 22, P.w, "center");
+    } else text("Нажми 1, 2 или 3  (или ↑ ↓ и ENTER)", 450, by + 6, 16, P.s, "center");
+  } else if (state === "win") {
+    ctx.fillStyle = "#0b0b12"; ctx.fillRect(0, 0, 900, 600);
+    drawCert(ctx, playerName);
+    ctx.fillStyle = P.B; ctx.fillRect(CERT_BTN.x, CERT_BTN.y, CERT_BTN.w, CERT_BTN.h);
+    ctx.fillStyle = "#1b2a4a"; ctx.fillRect(CERT_BTN.x + 3, CERT_BTN.y + 3, CERT_BTN.w - 6, CERT_BTN.h - 6);
+    text("СОХРАНИТЬ PNG (S)", CERT_BTN.x + CERT_BTN.w / 2, CERT_BTN.y + 28, 16, P.w, "center");
+    ctx.fillStyle = P.g; ctx.fillRect(SHARE_BTN.x, SHARE_BTN.y, SHARE_BTN.w, SHARE_BTN.h);
+    ctx.fillStyle = "#1b4d3a"; ctx.fillRect(SHARE_BTN.x + 3, SHARE_BTN.y + 3, SHARE_BTN.w - 6, SHARE_BTN.h - 6);
+    text("ПОДЕЛИТЬСЯ (D)", SHARE_BTN.x + SHARE_BTN.w / 2, SHARE_BTN.y + 28, 16, P.w, "center");
+    if (shareNote && Date.now() < shareNote.until) text(shareNote.text, 450, 541, 13, P.y, "center");
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ИГРАТЬ СНОВА", 880, 576, 17, P.w, "right");
+  } else if (state === "name") {
+    ctx.fillStyle = "rgba(15,15,27,.95)"; ctx.fillRect(0, 0, 900, 600);
+    ctx.drawImage(officer, 414, 90, 72, 72);
+    text("КАК ВАС ЗОВУТ?", 450, 230, 38, P.y, "center");
+    text("Имя будет указано на именном сертификате в конце игры.", 450, 266, 16, P.s, "center");
+    ctx.fillStyle = P.B; ctx.fillRect(200, 300, 500, 60); ctx.fillStyle = "#1b2a4a"; ctx.fillRect(203, 303, 494, 54);
+    const cur = ((t * 2) | 0) % 2 === 0 ? "_" : " ";
+    text(playerName + cur, 450, 342, 28, P.w, "center");
+    text("Введите имя с клавиатуры (до 24 знаков) или нажмите на экран.", 450, 400, 15, P.s, "center");
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ДАЛЕЕ", 450, 500, 26, P.w, "center");
+    text("Можно оставить пустым: тогда на сертификате будет «Участник тренажёра».", 450, 545, 13, P.S, "center");
+  } else if (state === "levels") {
+    ctx.fillStyle = "rgba(15,15,27,.96)"; ctx.fillRect(0, 0, 900, 600);
+    text("ВЫБОР УРОВНЯ", 450, 80, 36, P.y, "center");
+    text("Прогресс сохраняется. Открыто: " + unlocked + " из " + MAXLVL, 450, 115, 16, P.s, "center");
+    for (let i = 0; i < MAXLVL; i++) {
+      const x = 75 + (i % 5) * 150, y = (MAXLVL <= 5 ? 230 : 170) + Math.floor(i / 5) * 150, open = i < unlocked;
+      ctx.fillStyle = i === lvlSel ? P.B : P.S; ctx.fillRect(x, y, 130, 120);
+      ctx.fillStyle = open ? "#1b2a4a" : "#14141c"; ctx.fillRect(x + 3, y + 3, 124, 114);
+      text(String(i + 1), x + 65, y + 72, 44, open ? P.w : P.S, "center");
+      text(!open ? "ЗАКРЫТ" : i + 1 < unlocked ? "ПРОЙДЕН" : "ТЕКУЩИЙ", x + 65, y + 100, 13, !open ? P.S : i + 1 < unlocked ? P.g : P.y, "center");
+    }
+    text("← → ↑ ↓ выбор · ENTER — начать · ESC — назад", 450, 530, 15, P.s, "center");
+    text("← НАЗАД", 20, 585, 14, P.s);
+  } else if (state === "ach") {
+    ctx.fillStyle = "rgba(15,15,27,.96)"; ctx.fillRect(0, 0, 900, 600);
+    text("ДОСТИЖЕНИЯ", 450, 62, 34, P.y, "center");
+    text("Открыто: " + achCount() + " из " + ACH.length, 450, 92, 15, P.s, "center");
+    ACH.forEach((a, i) => {
+      const y = 125 + i * 52, got = !!ach[a.id];
+      ctx.fillStyle = got ? P.y : P.S; ctx.beginPath(); ctx.arc(95, y + 16, 17, 0, 6.3); ctx.fill();
+      text(got ? "✓" : "?", 95, y + 24, 22, got ? P.k : P.n, "center");
+      text(a.t, 130, y + 14, 17, got ? P.w : P.S); text(a.d, 130, y + 34, 13, got ? P.s : P.S);
+    });
+    text("ENTER — назад", 450, 585, 20, P.w, "center");
+  } else if (state === "review") {
+    ctx.fillStyle = "rgba(15,15,27,.96)"; ctx.fillRect(0, 0, 900, 600);
+    text("РАЗБОР ОШИБОК", 450, 60, 32, P.y, "center");
+    const list = topicsWrong().slice(0, 5);
+    text(list.length ? "Темы, в которых были ошибки, и короткие памятки:" : "Ошибок не было — отличный результат!", 450, 92, 15, P.s, "center");
+    list.forEach((tp, i) => {
+      const y = 140 + i * 84;
+      ctx.fillStyle = P.R; ctx.fillRect(60, y - 20, 5, 62);
+      text(tp + "  (ошибок: " + wrongTopics[tp] + ")", 80, y, 17, P.y);
+      wrap(TIPS[tp] || "", 84).forEach((ln, j) => text(ln, 80, y + 24 + j * 20, 14, P.w));
+    });
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ДАЛЕЕ", 450, 585, 22, P.w, "center");
+  } else if (state === "safe" || state === "win") {
+    const win = state === "win", ok = win || safeAll;
+    ctx.fillStyle = "rgba(15,15,27,.94)"; ctx.fillRect(0, 0, 900, 600);
+    text(win ? "ВСЕ " + MAXLVL + " УРОВНЕЙ ПРОЙДЕНЫ!" : ok ? "ВАШИ ДЕНЬГИ И ДАННЫЕ В БЕЗОПАСНОСТИ" : "ЗАЩИТА ПОКА НЕПОЛНАЯ", 450, 64, win ? 34 : 28, ok ? P.y : P.R, "center");
+    text(win ? "Клиенты защищены. Счёт: " + score + " · Оберегов: " + amulets
+             : ok ? "Уровень " + level + ": все ответы верны. Оберег получен, +1 жизнь."
+                  : "Верных ответов: " + lvlRight + " из " + quizN + ". Запомните правило ниже.", 450, 98, 16, P.s, "center");
+    drawSafe(450, 300, ok);
+    text("Запрос комплаенса — это приложение и документы.", 450, 465, 16, P.w, "center");
+    text("Пароли, коды из СМС и переводы «на безопасный счёт» — никогда.", 450, 489, 16, P.w, "center");
+    if (win) text("Поймано угроз: " + kills + " · Квиз: " + quizRight + " из " + quizTotal, 450, 524, 15, P.B, "center");
+    if (((t * 2) | 0) % 2 === 0) text(win ? "ENTER — ИГРАТЬ СНОВА" : "ENTER — УРОВЕНЬ " + (level + 1), 450, 580, 24, P.w, "center");
+  } else if (state === "pause") {
+    ctx.fillStyle = "rgba(15,15,27,.7)"; ctx.fillRect(0, 0, 900, 600);
+    text("ПАУЗА", 450, 310, 48, P.w, "center");
+    text("P или тап — продолжить", 450, 350, 16, P.s, "center");
+  } else if (state === "over") {
+    ctx.fillStyle = "rgba(15,15,27,.82)"; ctx.fillRect(0, 0, 900, 600);
+    text("ИГРА ОКОНЧЕНА", 450, 150, 44, P.r, "center");
+    text("Слишком много угроз пропущено. Попробуйте ещё раз!", 450, 195, 17, P.w, "center");
+    text("Счёт: " + score + "   Рекорд: " + best + "   Уровень: " + level, 450, 245, 19, P.y, "center");
+    text("Поймано плохих: " + kills, 450, 290, 17, P.g, "center");
+    text("Пропущено плохих: " + missed, 450, 318, 17, P.R, "center");
+    text("Сбито честных: " + falsePos, 450, 346, 17, P.o, "center");
+    text("Квиз: верно " + quizRight + " из " + quizTotal + "   Обереги: " + amulets, 450, 374, 17, P.B, "center");
+    text("Помните: настоящий комплаенс не просит пароли и коды из СМС.", 450, 420, 15, P.s, "center");
+    if (((t * 2) | 0) % 2 === 0) text("ENTER — ЕЩЁ РАЗ (УРОВЕНЬ " + level + ")", 450, 485, 24, P.w, "center");
+    text("H — справка · L — выбор уровня" + (topicsWrong().length ? " · R — разбор ошибок" : "") + " · A — достижения", 450, 525, 14, P.s, "center");
+  }
+}
+
+// ---------- Loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); render(); drawAchPopup(); music();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
